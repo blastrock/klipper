@@ -206,8 +206,8 @@ class Calibrater:
         self.pmgr = pmgr
         self.probe = None
         # probe settings are set to none, until they are available
-        self.lift_speed, self.probe_x_offset, self.probe_y_offset, \
-            self.stored_probe_z_offset = None, None, None, None
+        self.lift_speed, self.probe_x_offset, self.probe_y_offset, _ = \
+            None, None, None, None
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect(config))
         self.speed = calibrater_config['speed']
@@ -215,7 +215,7 @@ class Calibrater:
         self.start_point = (
             calibrater_config['start_x'], calibrater_config['y'])
         self.end_point = (calibrater_config['end_x'], calibrater_config['y'])
-        self.results = []
+        self.results = None
         self.current_point_index = None
         self.gcmd = None
 
@@ -230,8 +230,8 @@ class Calibrater:
                 raise config.error(
                     "X_TWIST_COMPENSATION requires [probe] to be defined")
             self.lift_speed = self.probe.get_lift_speed()
-            self.probe_x_offset, self.probe_y_offset, \
-                self.stored_probe_z_offset = self.probe.get_offsets()
+            self.probe_x_offset, self.probe_y_offset, _ = \
+                self.probe.get_offsets()
         return callback
 
     def _register_gcode_handlers(self):
@@ -277,6 +277,7 @@ class Calibrater:
 
         # begin calibration
         self.current_point_index = 0
+        self.results = []
         self._calibration(
             profile_name, probe_points, nozzle_points, interval_dist)
 
@@ -323,7 +324,7 @@ class Calibrater:
                           [0], probe_points[self.current_point_index][1], None))
 
         # probe the point
-        self.probe.run_probe(self.gcmd)
+        self.current_measured_z = self.probe.run_probe(self.gcmd)[2]
 
         # horizontal_move_z (to prevent probe trigger or hitting bed)
         self._move_helper((None, None, self.horizontal_move_z))
@@ -348,7 +349,7 @@ class Calibrater:
                 self.gcmd.respond_info(
                     "X_TWIST_CALIBRATE: Probe cancelled, calibration aborted")
                 return
-            z_offset = self.stored_probe_z_offset - kin_pos[2]
+            z_offset = self.current_measured_z - kin_pos[2]
             self.results.append(z_offset)
             if is_end:
                 # end of calibration
@@ -371,8 +372,8 @@ class Calibrater:
         self.pmgr.create_profile(profile_name, self.results, avg)
         # recommend z offset to user
         self.gcmd.respond_info(
-            "X_TWIST_CALIBRATE: Calibration complete, reccomended z_offset: %f"
-            % (avg))
+            "X_TWIST_CALIBRATE: Calibration complete, offsets: %s, reccomended z_offset: %f"
+            % (self.results, avg))
 
 
 class Profile:

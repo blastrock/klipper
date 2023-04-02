@@ -87,7 +87,7 @@ class XTwistCompensation:
             desc=self.cmd_X_TWIST_COMPENSATE_STATUS_help)
 
     def get_z_compensation_value(self, x_coord, optional_profile_name=None):
-        # returns the (lineraly interpolated) z compensation value
+        # returns the (linearly interpolated) z compensation value
         # for the given x coordinate
         # uses the current profile if optional_profile_name is not specified
         enabled = self.pmgr.get_is_enabled()
@@ -372,7 +372,7 @@ class Calibrater:
         self.pmgr.create_profile(profile_name, self.results, avg)
         # recommend z offset to user
         self.gcmd.respond_info(
-            "X_TWIST_CALIBRATE: Calibration complete, offsets: %s, reccomended z_offset: %f"
+            "X_TWIST_CALIBRATE: Calibration complete, offsets: %s, recommended z_offset: %f"
             % (self.results, avg))
 
 
@@ -412,7 +412,7 @@ class ProfileManager:
         # return the current profile
         if self.current_profile is None:
             raise self.gcode.error(
-                "No X_TWIST_PROFILE loaded")
+                "No X_TWIST_PROFILE loaded. Load an existing profile with X_TWIST_PROFILE_LOAD or create a new profile with X_TWIST_CALIBRATE.")
         return self.current_profile
 
     def get_profiles(self):
@@ -569,14 +569,14 @@ class ProfileManager:
         self.load_profile(profile_name)
 
     cmd_X_TWIST_PROFILE_CLEAR_help = \
-        "Clears the active mesh"
+        "Clears the active X twist compensation"
 
     def cmd_X_TWIST_PROFILE_CLEAR(self, gcmd):
         # clears the active mesh
         self.clear_profile()
 
     cmd_X_TWIST_PROFILE_SAVE_help = \
-        "Saves the active mesh to the config file"
+        "Saves the active X twist compensation to the config file"
 
     def cmd_X_TWIST_PROFILE_SAVE(self, gcmd):
         # saves the active mesh to the config file

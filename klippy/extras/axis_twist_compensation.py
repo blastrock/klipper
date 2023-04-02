@@ -1,10 +1,10 @@
-# X Twist Compensation
+# Axis Twist Compensation
 
 # Copyright (C) 2022  Jeremy Tan <jeremytkw98@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 """
-[x_twist_compensation]
+[axis_twist_compensation]
 horizontal_move_z: 10
 speed: 50
 start_x: 0 ; nozzle's x coordinate at the start of the calibration ! required
@@ -39,24 +39,26 @@ class Config:
     @staticmethod
     def load_from_config_data(config):
         return Config(
-            Helpers.parse_comma_separated_floats(config.get('z_compensations', default="")),
+            Helpers.parse_comma_separated_floats(
+                config.get('z_compensations', default="")),
             config.getfloat('recommended_z_offset', default=0.0),
         )
 
     def save_to_config(self, name, configdata):
         values_as_str = ', '.join([Helpers.format_float_to_n_decimals(x)
                                    for x in self.z_compensations])
-        configdata.set(name, 'z_compensations', values_as_str) 
+        configdata.set(name, 'z_compensations', values_as_str)
         configdata.set(name, 'recommended_z_offset',
-                       Helpers.format_float_to_n_decimals(self.recommended_z_offset))
+                       Helpers.format_float_to_n_decimals(
+                           self.recommended_z_offset))
 
 
-class XTwistCompensation:
+class AxisTwistCompensation:
     def __init__(self, config):
         # get printer
         self.printer = config.get_printer()
 
-        # get values from [x_twist_compensation] section in printer .cfg
+        # get values from [axis_twist_compensation] section in printer .cfg
         for config_key, \
             (config_type, required, default) in Config.CONFIG_OPTIONS.items():
             value = None
@@ -86,7 +88,7 @@ class XTwistCompensation:
             config, self.configmgr, calibrater_config)
 
     def get_z_compensation_value(self, x_coord):
-        current_config = self.configmgr.get_config() 
+        current_config = self.configmgr.get_config()
         z_compensations = current_config.z_compensations
         if not z_compensations:
             return 0
@@ -140,7 +142,7 @@ class Calibrater:
             self.probe = self.printer.lookup_object('probe', None)
             if (self.probe is None):
                 raise config.error(
-                    "X_TWIST_COMPENSATION requires [probe] to be defined")
+                    "AXIS_TWIST_COMPENSATION requires [probe] to be defined")
             self.lift_speed = self.probe.get_lift_speed()
             self.probe_x_offset, self.probe_y_offset, _ = \
                 self.probe.get_offsets()
@@ -150,16 +152,17 @@ class Calibrater:
         # register gcode handlers
         self.gcode = self.printer.lookup_object('gcode')
         self.gcode.register_command(
-            'X_TWIST_CALIBRATE', self.cmd_X_TWIST_CALIBRATE,
-            desc=self.cmd_X_TWIST_CALIBRATE_help)
+            'AXIS_TWIST_COMPENSATION_CALIBRATE',
+            self.cmd_AXIS_TWIST_COMPENSATION_CALIBRATE,
+            desc=self.cmd_AXIS_TWIST_COMPENSATION_CALIBRATE_help)
 
-    cmd_X_TWIST_CALIBRATE_help = """
+    cmd_AXIS_TWIST_COMPENSATION_CALIBRATE_help = """
     Performs the x twist calibration wizard
     Measure z probe offset at n points along the x axis,
     and calculate x twist compensation
     """
 
-    def cmd_X_TWIST_CALIBRATE(self, gcmd):
+    def cmd_AXIS_TWIST_COMPENSATION_CALIBRATE(self, gcmd):
         self.gcmd = gcmd
         n_points = gcmd.get_int('N_POINTS', DEFAULT_N_POINTS)
 
@@ -218,15 +221,17 @@ class Calibrater:
 
     def _calibration(self, probe_points, nozzle_points, interval):
         # begin the calibration process
-        self.gcmd.respond_info("X_TWIST_CALIBRATE: Probing point %d of %d" % (
-            self.current_point_index + 1, len(probe_points)))
+        self.gcmd.respond_info("AXIS_TWIST_COMPENSATION_CALIBRATE: "
+                               "Probing point %d of %d" % (
+                                   self.current_point_index + 1,
+                                   len(probe_points)))
 
         # horizontal_move_z (to prevent probe trigger or hitting bed)
         self._move_helper((None, None, self.horizontal_move_z))
 
         # move to point to probe
-        self._move_helper((probe_points[self.current_point_index]
-                          [0], probe_points[self.current_point_index][1], None))
+        self._move_helper((probe_points[self.current_point_index][0],
+                           probe_points[self.current_point_index][1], None))
 
         # probe the point
         self.current_measured_z = self.probe.run_probe(self.gcmd)[2]
@@ -252,7 +257,8 @@ class Calibrater:
             if kin_pos is None:
                 # probe was cancelled
                 self.gcmd.respond_info(
-                    "X_TWIST_CALIBRATE: Probe cancelled, calibration aborted")
+                    "AXIS_TWIST_COMPENSATION_CALIBRATE: Probe cancelled, "
+                    "calibration aborted")
                 return
             z_offset = self.current_measured_z - kin_pos[2]
             self.results.append(z_offset)
@@ -276,16 +282,17 @@ class Calibrater:
         self.configmgr.set_config(Config(self.results, avg))
         # recommend z offset to user
         self.gcmd.respond_info(
-            "X_TWIST_CALIBRATE: Calibration complete, offsets: %s, recommended z_offset: %f"
+            "AXIS_TWIST_COMPENSATION_CALIBRATE: Calibration complete, "
+            "offsets: %s, recommended z_offset: %f"
             % (self.results, avg))
 
 
 class ConfigManager:
-    def __init__(self, config, x_twist_compensation):
+    def __init__(self, config, axis_twist_compensation):
         # setup self attributes
         self.name = config.get_name()
         self.printer = config.get_printer()
-        self.x_twist_compensation = x_twist_compensation
+        self.axis_twist_compensation = axis_twist_compensation
         self.gcode = self.printer.lookup_object('gcode')
 
         # fetch the stored config
@@ -308,8 +315,9 @@ class ConfigManager:
     def _register_gcode_handlers(self):
         # register gcode handlers
         self.gcode.register_command(
-            'X_TWIST_COMPENSATION_CLEAR', self.cmd_X_TWIST_COMPENSATION_CLEAR,
-            desc=self.cmd_X_TWIST_COMPENSATION_CLEAR_help)
+            'AXIS_TWIST_COMPENSATION_CLEAR',
+            self.cmd_AXIS_TWIST_COMPENSATION_CLEAR,
+            desc=self.cmd_AXIS_TWIST_COMPENSATION_CLEAR_help)
 
     def clear_config(self):
         self.config = Config([], 0.0)
@@ -318,14 +326,14 @@ class ConfigManager:
         configfile = self.printer.lookup_object('configfile')
         self.config.save_to_config(self.name, configfile)
         self.gcode.respond_info(
-            "X_TWIST_COMPENSATION state has been saved\n"
+            "AXIS_TWIST_COMPENSATION state has been saved\n"
             "for the current session.  The SAVE_CONFIG command will\n"
             "update the printer config file and restart the printer.")
 
-    cmd_X_TWIST_COMPENSATION_CLEAR_help = \
-        "Clears the active X twist compensation"
+    cmd_AXIS_TWIST_COMPENSATION_CLEAR_help = \
+        "Clears the active axis twist compensation"
 
-    def cmd_X_TWIST_COMPENSATION_CLEAR(self, gcmd):
+    def cmd_AXIS_TWIST_COMPENSATION_CLEAR(self, gcmd):
         # clears the active mesh
         self.clear_config()
 
@@ -343,7 +351,7 @@ class Helpers:
         # parse comma separated floats into list of floats
         return [float(value) for value in comma_separated_floats.split(', ')]
 
-# klipper's entry point using [x_twist_compensation] section in printer.cfg
+# klipper's entry point using [axis_twist_compensation] section in printer.cfg
 
 def load_config(config):
-    return XTwistCompensation(config)
+    return AxisTwistCompensation(config)

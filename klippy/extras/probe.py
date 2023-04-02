@@ -127,12 +127,11 @@ class PrinterProbe:
             if "Timeout during endstop homing" in reason:
                 reason += HINT_TIMEOUT
             raise self.printer.command_error(reason)
-        # get z compensation from x_twist
-        # x_twist module checks if it is enabled, returns 0 compensation if not
-        x_twist_compensation = self.printer.lookup_object(
-            'x_twist_compensation', None)
-        z_compensation = 0 if not x_twist_compensation \
-            else x_twist_compensation.get_z_compensation_value(pos[0])
+        # get z compensation from axis_twist_compensation
+        axis_twist_compensation = self.printer.lookup_object(
+            'axis_twist_compensation', None)
+        z_compensation = 0 if not axis_twist_compensation \
+            else axis_twist_compensation.get_z_compensation_value(pos[0])
         # add z compensation to probe position
         epos[2] += z_compensation
         self.gcode.respond_info("probe at %.3f,%.3f is z=%.6f"

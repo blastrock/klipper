@@ -10,6 +10,7 @@ speed: 50
 start_x: 0 ; nozzle's x coordinate at the start of the calibration ! required
 end_x: 200 ; nozzle's x coordinate at the end of the calibration ! required
 y: 100 ; nozzle's y coordinate during the calibration ! required
+type: multilinear
 """
 
 import logging
@@ -29,7 +30,8 @@ class Config:
         'speed': (float, OPTIONAL, DEFAULT_SPEED),
         'start_x': (float, REQUIRED, None),
         'end_x': (float, REQUIRED, None),
-        'y': (float, REQUIRED, None)
+        'y': (float, REQUIRED, None),
+        'type': (str, OPTIONAL, 'multilinear'),
     }
 
     def __init__(self, z_compensations, recommended_z_offset):
@@ -72,6 +74,11 @@ class AxisTwistCompensation:
                     .format(config.get_name(), config_key))
             setattr(self, config_key, value)
 
+        if self.type not in ['linear', 'multilinear']:
+                raise config.error(
+                    "Invalid axis_twist_compensation.type value: {}"
+                    .format(self.type))
+
         # setup persistent storage
         self.configmgr = ConfigManager(config, self)
 
@@ -89,9 +96,21 @@ class AxisTwistCompensation:
 
     def get_z_compensation_value(self, x_coord):
         current_config = self.configmgr.get_config()
-        z_compensations = current_config.z_compensations
-        if not z_compensations:
+        if not current_config.z_compensations:
             return 0
+        self._ensure_init(current_config)
+
+        if self.type == 'linear':
+            return self._get_z_compensation_value_linear(current_config, x_coord)
+        elif self.type == 'multilinear':
+            return self._get_z_compensation_value_multilinear(current_config, x_coord)
+
+    def _get_z_compensation_value_linear(self, current_config, x_coord):
+        return current_config.m * x_coord + current_config.b
+
+
+    def _get_z_compensation_value_multilinear(self, current_config, x_coord):
+        z_compensations = current_config.z_compensations
         n_points = len(z_compensations)
         spacing = (self.end_x - self.start_x) / (n_points - 1)
         interpolate_t = (x_coord - self.start_x) / spacing
@@ -103,13 +122,26 @@ class AxisTwistCompensation:
             z_compensations[interpolate_i + 1])
         return interpolated_z_compensation
 
-    def _get_mesh_point_x_coord(self, col_index, mesh):
-        # returns the x coordinate of the given column index
-        # in the probed matrix
-        x_min = mesh.mesh_x_min
-        x_range = mesh.mesh_x_max - mesh.mesh_x_min
-        x_step = x_range / (len(mesh.probed_matrix[0]) - 1)
-        return x_min + col_index * x_step
+    def _ensure_init(self, config):
+        if self.type == 'linear' and not hasattr(config, 'm'):
+            z_compensations = config.z_compensations
+            n_points = len(z_compensations)
+            interval_dist = \
+                (self.end_x - self.start_x) / (n_points - 1)
+            indexes = [self.start_x + i*interval_dist
+                       for i in range(0, n_points)]
+
+            # Calculate the mean of x and y values
+            mean_indexes = sum(indexes) / n_points
+            mean_z_compensations = sum(z_compensations) / n_points
+
+            # Calculate the covariance and variance
+            covar = sum((indexes[i] - mean_indexes) * (z_compensations[i] - mean_z_compensations) for i in range(n_points))
+            var = sum((indexes[i] - mean_indexes)**2 for i in range(n_points))
+
+            # Compute the slope (m) and intercept (b) of the best-fit line
+            config.m = covar / var
+            config.b = mean_z_compensations - config.m * mean_indexes
 
 
 class Calibrater:
@@ -167,9 +199,9 @@ class Calibrater:
         n_points = gcmd.get_int('N_POINTS', DEFAULT_N_POINTS)
 
         # check for valid n_points
-        if n_points is None or n_points < 3:
+        if n_points is None or n_points < 2:
             raise self.gcmd.error(
-                "N_POINTS to probe must be at least 3")
+                "N_POINTS to probe must be at least 2")
 
         # clear the current config
         self.configmgr.clear_config()

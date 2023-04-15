@@ -5,7 +5,7 @@
 
 """
 [axis_twist_compensation]
-horizontal_move_z: 10
+horizontal_move_z: 5
 speed: 50
 start_x: 0 ; nozzle's x coordinate at the start of the calibration ! required
 end_x: 200 ; nozzle's x coordinate at the end of the calibration ! required
@@ -16,6 +16,7 @@ type: multilinear
 import logging
 import math
 from . import manual_probe as ManualProbe, bed_mesh as BedMesh
+
 
 DEFAULT_N_POINTS = 3
 
@@ -32,21 +33,13 @@ class Config:
         'end_x': (float, REQUIRED, None),
         'y': (float, REQUIRED, None),
         'type': (str, OPTIONAL, 'multilinear'),
+        'z_compensation': (str, OPTIONAL, None),
     }
 
-    def __init__(self, z_compensations):
-        self.z_compensations = z_compensations
-
     @staticmethod
-    def load_from_config_data(config):
-        return Config(
-            Helpers.parse_comma_separated_floats(
-                config.get('z_compensations', default="")),
-        )
-
-    def save_to_config(self, name, configdata):
+    def save_to_config(self, name, z_compensations, configdata):
         values_as_str = ', '.join([Helpers.format_float_to_n_decimals(x)
-                                   for x in self.z_compensations])
+                                   for x in z_compensations])
         configdata.set(name, 'z_compensations', values_as_str)
 
 
@@ -54,6 +47,7 @@ class AxisTwistCompensation:
     def __init__(self, config):
         # get printer
         self.printer = config.get_printer()
+        self.gcode = self.printer.lookup_object('gcode')
 
         # get values from [axis_twist_compensation] section in printer .cfg
         for config_key, \
@@ -61,6 +55,9 @@ class AxisTwistCompensation:
             value = None
             if config_type == float:
                 value = config.getfloat(config_key, default)
+            elif config_key == 'z_compensations':
+                value = Helpers.parse_comma_separated_floats(
+                    config.get('z_compensations', default=""))
             else:
                 value = config.get(config_key, default)
             if required and value is None:
@@ -79,15 +76,16 @@ class AxisTwistCompensation:
 
         # setup calibrater
         calibrater_config = {
-            'horizontal_move_z': self.horizontal_move_z
-                if hasattr(self, 'horizontal_move_z') else None,
-            'speed': self.speed if hasattr(self, 'speed') else None,
-            'start_x': self.start_x if hasattr(self, 'start_x') else None,
-            'end_x': self.end_x if hasattr(self, 'end_x') else None,
-            'y': self.y if hasattr(self, 'y') else None
+            'horizontal_move_z': self.horizontal_move_z,
+            'speed': self.speed,
+            'start_x': self.start_x, 'start_x',
+            'end_x': self.end_x,
+            'y': self.y,
         }
         self.calibrater = Calibrater(
             config, self.configmgr, calibrater_config)
+
+        self._register_gcode_handlers()
 
     def get_z_compensation_value(self, x_coord):
         current_config = self.configmgr.get_config()
@@ -137,6 +135,18 @@ class AxisTwistCompensation:
             # Compute the slope (m) and intercept (b) of the best-fit line
             config.m = covar / var
             config.b = mean_z_compensations - config.m * mean_indexes
+
+    def _register_gcode_handlers(self):
+        self.gcode.register_command(
+            'AXIS_TWIST_COMPENSATION_CLEAR',
+            self.cmd_AXIS_TWIST_COMPENSATION_CLEAR,
+            desc=self.cmd_AXIS_TWIST_COMPENSATION_CLEAR_help)
+
+    cmd_AXIS_TWIST_COMPENSATION_CLEAR_help = \
+        "Clears the active axis twist compensation"
+
+    def cmd_AXIS_TWIST_COMPENSATION_CLEAR(self, gcmd):
+        self.z_compensations = []
 
 
 class Calibrater:
@@ -199,7 +209,7 @@ class Calibrater:
                 "N_POINTS to probe must be at least 2")
 
         # clear the current config
-        self.configmgr.clear_config()
+        self.z_compensations = []
 
         # calculate some values
         x_range = self.end_point[0] - self.start_point[0]
@@ -306,63 +316,16 @@ class Calibrater:
         # so that they are independent of z_offset
         self.results = [avg - x for x in self.results]
         # save the config
-        self.configmgr.set_config(Config(self.results))
+        self.config.save_to_config(self.name, self.results, configfile)
+        self.gcode.respond_info(
+            "AXIS_TWIST_COMPENSATION state has been saved\n"
+            "for the current session.  The SAVE_CONFIG command will\n"
+            "update the printer config file and restart the printer.")
         # output result
         self.gcmd.respond_info(
             "AXIS_TWIST_COMPENSATION_CALIBRATE: Calibration complete, "
             "offsets: %s, mean z_offset: %f"
             % (self.results, avg))
-
-
-class ConfigManager:
-    def __init__(self, config, axis_twist_compensation):
-        # setup self attributes
-        self.name = config.get_name()
-        self.printer = config.get_printer()
-        self.axis_twist_compensation = axis_twist_compensation
-        self.gcode = self.printer.lookup_object('gcode')
-
-        # fetch the stored config
-        self._fetch_stored_config(config)
-
-        # register gcode handlers
-        self._register_gcode_handlers()
-
-    def get_config(self):
-        return self.config
-
-    def set_config(self, config):
-        self.config = config
-        self._save_config()
-
-    def _fetch_stored_config(self, config):
-        stored_config = config.getsection(self.name)
-        self.config = Config.load_from_config_data(stored_config)
-
-    def _register_gcode_handlers(self):
-        # register gcode handlers
-        self.gcode.register_command(
-            'AXIS_TWIST_COMPENSATION_CLEAR',
-            self.cmd_AXIS_TWIST_COMPENSATION_CLEAR,
-            desc=self.cmd_AXIS_TWIST_COMPENSATION_CLEAR_help)
-
-    def clear_config(self):
-        self.config = Config([])
-
-    def _save_config(self):
-        configfile = self.printer.lookup_object('configfile')
-        self.config.save_to_config(self.name, configfile)
-        self.gcode.respond_info(
-            "AXIS_TWIST_COMPENSATION state has been saved\n"
-            "for the current session.  The SAVE_CONFIG command will\n"
-            "update the printer config file and restart the printer.")
-
-    cmd_AXIS_TWIST_COMPENSATION_CLEAR_help = \
-        "Clears the active axis twist compensation"
-
-    def cmd_AXIS_TWIST_COMPENSATION_CLEAR(self, gcmd):
-        # clears the active mesh
-        self.clear_config()
 
 
 class Helpers:

@@ -22,7 +22,7 @@ DEFAULT_N_POINTS = 3
 
 class Config:
     DEFAULT_SPEED = 50.
-    DEFAULT_HORIZONTAL_MOVE_Z = 10.
+    DEFAULT_HORIZONTAL_MOVE_Z = 5.
     REQUIRED = True
     OPTIONAL = False
     CONFIG_OPTIONS = {
@@ -34,25 +34,20 @@ class Config:
         'type': (str, OPTIONAL, 'multilinear'),
     }
 
-    def __init__(self, z_compensations, recommended_z_offset):
+    def __init__(self, z_compensations):
         self.z_compensations = z_compensations
-        self.recommended_z_offset = recommended_z_offset
 
     @staticmethod
     def load_from_config_data(config):
         return Config(
             Helpers.parse_comma_separated_floats(
                 config.get('z_compensations', default="")),
-            config.getfloat('recommended_z_offset', default=0.0),
         )
 
     def save_to_config(self, name, configdata):
         values_as_str = ', '.join([Helpers.format_float_to_n_decimals(x)
                                    for x in self.z_compensations])
         configdata.set(name, 'z_compensations', values_as_str)
-        configdata.set(name, 'recommended_z_offset',
-                       Helpers.format_float_to_n_decimals(
-                           self.recommended_z_offset))
 
 
 class AxisTwistCompensation:
@@ -311,11 +306,11 @@ class Calibrater:
         # so that they are independent of z_offset
         self.results = [avg - x for x in self.results]
         # save the config
-        self.configmgr.set_config(Config(self.results, avg))
-        # recommend z offset to user
+        self.configmgr.set_config(Config(self.results))
+        # output result
         self.gcmd.respond_info(
             "AXIS_TWIST_COMPENSATION_CALIBRATE: Calibration complete, "
-            "offsets: %s, recommended z_offset: %f"
+            "offsets: %s, mean z_offset: %f"
             % (self.results, avg))
 
 
@@ -352,7 +347,7 @@ class ConfigManager:
             desc=self.cmd_AXIS_TWIST_COMPENSATION_CLEAR_help)
 
     def clear_config(self):
-        self.config = Config([], 0.0)
+        self.config = Config([])
 
     def _save_config(self):
         configfile = self.printer.lookup_object('configfile')

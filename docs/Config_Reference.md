@@ -1949,15 +1949,15 @@ z_offset:
 #   See the "probe" section for more information on the parameters above.
 ```
 
-### [x_twist_compensation]
+### [axis_twist_compensation]
 
-X axis twist dependent toolhead Z position adjustment. Compensate for vertical
+Axis twist dependent toolhead Z position adjustment. Compensate for vertical
 toolhead movement caused by the rotation of the toolhead about the X axis due to
-a twist. See [X Twist Compensation Guide](X_Twist_Compensation.md) for more
-detailed information regarding symptoms, configuration and setup.
+a twist. See the [Axis Twist Compensation Guide](X_Twist_Compensation.md) for
+more detailed information regarding symptoms, configuration and setup.
 
 ```
-[x_twist_compensation]
+[axis_twist_compensation]
 #speed: 50
 #   The speed (in mm/s) of non-probing moves during the calibration.
 #   The default is 50.
@@ -1977,6 +1977,11 @@ y: 112.5
 #   This should be the Y coordinate that positions the nozzle during the
 #   calibration process. This parameter must be provided and is recommended to
 #   be near the center of the bed
+#type: multilinear
+#   Defines the type of correction to apply. The choices are 'linear' or
+#   'multilinear'. 'linear' uses a linear regression to fit a line with the
+#   calibration points. 'multilinear' will interpolate linearly between each
+#   pair of points.
 ```
 
 ## Additional stepper motors and extruders

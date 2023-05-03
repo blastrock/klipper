@@ -15,6 +15,7 @@ type: multilinear
 
 import logging
 import math
+import time
 from . import manual_probe as ManualProbe, bed_mesh as BedMesh
 
 
@@ -268,6 +269,8 @@ class Calibrater:
         # move to point to probe
         self._move_helper((probe_points[self.current_point_index][0],
                            probe_points[self.current_point_index][1], None))
+
+        time.sleep(10)
 
         # probe the point
         self.current_measured_z = self.probe.run_probe(self.gcmd)[2]

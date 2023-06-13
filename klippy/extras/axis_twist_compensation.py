@@ -11,6 +11,10 @@ start_x: 0 ; nozzle's x coordinate at the start of the calibration ! required
 end_x: 200 ; nozzle's x coordinate at the end of the calibration ! required
 y: 100 ; nozzle's y coordinate during the calibration ! required
 type: multilinear
+wait_for_continue: false
+start_gcode:
+end_gcode:
+abort_gcode:
 """
 
 import logging
@@ -34,6 +38,10 @@ class Config:
         'y': (float, REQUIRED, None),
         'type': (str, OPTIONAL, 'multilinear'),
         'z_compensations': (str, OPTIONAL, None),
+        'wait_for_continue': (bool, OPTIONAL, False),
+        'start_gcode': ('gcode', OPTIONAL, ''),
+        'end_gcode': ('gcode', OPTIONAL, ''),
+        'abort_gcode': (str, OPTIONAL, None),
     }
 
     @staticmethod
@@ -49,13 +57,21 @@ class AxisTwistCompensation:
         self.config = config
         self.printer = config.get_printer()
         self.gcode = self.printer.lookup_object('gcode')
+        gcode_macro = self.printer.load_object(config, 'gcode_macro')
 
         # get values from [axis_twist_compensation] section in printer .cfg
-        for config_key, \
-            (config_type, required, default) in Config.CONFIG_OPTIONS.items():
+        for (config_key, (config_type,
+                          required,
+                          default)) in Config.CONFIG_OPTIONS.items():
             value = None
             if config_type == float:
                 value = config.getfloat(config_key, default)
+            elif config_type == bool:
+                value = config.getboolean(config_key, default)
+            elif config_type == 'gcode':
+                value = gcode_macro.load_template(config,
+                                                         config_key,
+                                                         default)
             elif config_key == 'z_compensations':
                 value = Helpers.parse_comma_separated_floats(
                     config.get('z_compensations', default=""))
@@ -68,9 +84,15 @@ class AxisTwistCompensation:
             setattr(self, config_key, value)
 
         if self.type not in ['linear', 'multilinear']:
-                raise config.error(
+            raise config.error(
                     "Invalid axis_twist_compensation.type value: {}"
                     .format(self.type))
+
+        self.abort_gcode = (
+            self.end_gcode
+            if self.abort_gcode is None
+            else gcode_macro.load_template(config, 'abort_gcode', '')
+        )
 
         self.m = None
         self.b = None
@@ -163,11 +185,19 @@ class Calibrater:
                                             self._handle_connect())
         self.speed = compensation.speed
         self.horizontal_move_z = compensation.horizontal_move_z
+        self.start_gcode = compensation.start_gcode
+        self.end_gcode = compensation.end_gcode
+        self.abort_gcode = compensation.abort_gcode
+        self.wait_for_continue = compensation.wait_for_continue
         self.start_point = (compensation.start_x, compensation.y)
         self.end_point = (compensation.end_x, compensation.y)
         self.results = None
         self.current_point_index = None
         self.gcmd = None
+
+        self.nozzle_points = None
+        self.probe_points = None
+        self.interval = None
 
         # register gcode handlers
         self._register_gcode_handlers()
@@ -176,7 +206,7 @@ class Calibrater:
         # gets probe settings when they are available
         def callback():
             self.probe = self.printer.lookup_object('probe', None)
-            if (self.probe is None):
+            if self.probe is None:
                 raise self.config.error(
                     "AXIS_TWIST_COMPENSATION requires [probe] to be defined")
             self.lift_speed = self.probe.get_lift_speed()
@@ -197,8 +227,9 @@ class Calibrater:
     Measure z probe offset at n points along the x axis,
     and calculate x twist compensation
     """
-
     def cmd_AXIS_TWIST_COMPENSATION_CALIBRATE(self, gcmd):
+        self.start_gcode.run_gcode_from_command()
+
         self.gcmd = gcmd
         n_points = gcmd.get_int('N_POINTS', DEFAULT_N_POINTS)
 
@@ -213,9 +244,13 @@ class Calibrater:
         # calculate some values
         x_range = self.end_point[0] - self.start_point[0]
         interval_dist = x_range / (n_points - 1)
-        nozzle_points = self._calculate_nozzle_points(n_points, interval_dist)
-        probe_points = self._calculate_probe_points(
-            nozzle_points, self.probe_x_offset, self.probe_y_offset)
+        self.nozzle_points = self._calculate_nozzle_points(n_points,
+                                                           interval_dist)
+        self.probe_points = self._calculate_probe_points(
+            self.nozzle_points,
+            self.probe_x_offset,
+            self.probe_y_offset)
+        self.interval = interval_dist
 
         # verify no other manual probe is in progress
         ManualProbe.verify_no_manual_probe(self.printer)
@@ -223,7 +258,7 @@ class Calibrater:
         # begin calibration
         self.current_point_index = 0
         self.results = []
-        self._calibration(probe_points, nozzle_points, interval_dist)
+        self._calibration(self.probe_points, self.nozzle_points, self.interval)
 
     def _calculate_nozzle_points(self, n_points, interval_dist):
         # calculate the points to put the probe at, returned as a list of tuples
@@ -234,8 +269,10 @@ class Calibrater:
             nozzle_points.append((x, y))
         return nozzle_points
 
-    def _calculate_probe_points(self, nozzle_points,
-        probe_x_offset, probe_y_offset):
+    def _calculate_probe_points(self,
+                                nozzle_points,
+                                probe_x_offset,
+                                probe_y_offset):
         # calculate the points to put the nozzle at
         # returned as a list of tuples
         probe_points = []
@@ -247,11 +284,12 @@ class Calibrater:
 
     def _move_helper(self, target_coordinates, override_speed=None):
         # pad target coordinates
-        target_coordinates = \
-            (target_coordinates[0], target_coordinates[1], None) \
+        target_coordinates = (
+            (target_coordinates[0], target_coordinates[1], None)
             if len(target_coordinates) == 2 else target_coordinates
+        )
         toolhead = self.printer.lookup_object('toolhead')
-        speed = self.speed if target_coordinates[2] == None else self.lift_speed
+        speed = self.speed if target_coordinates[2] is None else self.lift_speed
         speed = override_speed if override_speed is not None else speed
         toolhead.manual_move(target_coordinates, speed)
 
@@ -284,8 +322,10 @@ class Calibrater:
             self._manual_probe_callback_factory(
                 probe_points, nozzle_points, interval))
 
-    def _manual_probe_callback_factory(self, probe_points,
-        nozzle_points, interval):
+    def _manual_probe_callback_factory(self,
+                                       probe_points,
+                                       nozzle_points,
+                                       interval):
         # returns a callback function for the manual probe
         is_end = self.current_point_index == len(probe_points) - 1
 
@@ -295,6 +335,7 @@ class Calibrater:
                 self.gcmd.respond_info(
                     "AXIS_TWIST_COMPENSATION_CALIBRATE: Probe cancelled, "
                     "calibration aborted")
+                self.abort_gcode.run_gcode_from_command()
                 return
             z_offset = self.current_measured_z - kin_pos[2]
             self.results.append(z_offset)
@@ -304,8 +345,32 @@ class Calibrater:
             else:
                 # move to next point
                 self.current_point_index += 1
-                self._calibration(probe_points, nozzle_points, interval)
+
+                self.probe_points = probe_points
+                self.nozzle_points = nozzle_points
+                self.interval = interval
+
+                if self.wait_for_continue:
+                    self._move_helper((None, None, self.horizontal_move_z))
+
+                    self.gcode.register_command(
+                        'CONTINUE',
+                        self.cmd_CONTINUE,
+                        desc=self.cmd_CONTINUE_help)
+
+                    self.gcmd.respond_info(
+                        "Type CONTINUE to continue to the next probing point"
+                    )
+                else:
+                    self._calibration(self.probe_points, self.nozzle_points,
+                                      self.interval)
         return callback
+
+    cmd_CONTINUE_help = "Continue to the next probing point"
+    def cmd_CONTINUE(self, gcmd):
+        self.gcode.register_command('CONTINUE',
+                                    None)
+        self._calibration(self.probe_points, self.nozzle_points, self.interval)
 
     def _finalize_calibration(self):
         # finalize the calibration process
@@ -317,15 +382,24 @@ class Calibrater:
         # save the config
         configfile = self.printer.lookup_object('configfile')
         Config.save_to_config(self.config.get_name(), self.results, configfile)
-        self.gcode.respond_info(
-            "AXIS_TWIST_COMPENSATION state has been saved "
-            "for the current session.  The SAVE_CONFIG command will "
-            "update the printer config file and restart the printer.")
+
+        self.nozzle_points = None
+        self.probe_points = None
+        self.interval = None
+
+        self.gcode.register_command('CONTINUE',
+                                    None)
+
         # output result
         self.gcmd.respond_info(
             "AXIS_TWIST_COMPENSATION_CALIBRATE: Calibration complete, "
             "offsets: %s, mean z_offset: %f"
             % (self.results, avg))
+        self.gcode.respond_info(
+            "AXIS_TWIST_COMPENSATION state has been saved "
+            "for the current session.  The SAVE_CONFIG command will "
+            "update the printer config file and restart the printer.")
+        self.end_gcode.run_gcode_from_command()
 
 
 class Helpers:

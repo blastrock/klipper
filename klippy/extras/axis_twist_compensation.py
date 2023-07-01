@@ -38,6 +38,8 @@ class AxisTwistCompensation:
         TYPES = ['linear', 'multilinear']
         self.compensation_type = config.getchoice('compensation_type', {t: t for t in TYPES})
         self.z_compensations = config.getlist('z_compensations', default=[])
+        self.compensation_start_x = config.getfloat('compensation_start_x', default=None)
+        self.compensation_end_x = config.getfloat('compensation_start_y', default=None)
 
         self.m = None
         self.b = None
@@ -283,6 +285,11 @@ class Calibrater:
         values_as_str = ', '.join(["{:.6f}".format(x)
                                    for x in self.results])
         configfile.set(self.configname, 'z_compensations', values_as_str)
+        configfile.set(self.configname, 'compensation_start_x', self.start_point[0])
+        configfile.set(self.configname, 'compensation_end_x', self.end_point[0])
+        self.compensation.z_compensations = self.results
+        self.compensation.compensation_start_x = self.start_point[0]
+        self.compensation.compensation_end_x = self.end_point[0]
         self.gcode.respond_info(
             "AXIS_TWIST_COMPENSATION state has been saved "
             "for the current session.  The SAVE_CONFIG command will "

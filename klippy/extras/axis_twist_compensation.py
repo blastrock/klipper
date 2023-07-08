@@ -38,8 +38,6 @@ class AxisTwistCompensation:
         # setup calibrater
         self.calibrater = Calibrater(self, config)
 
-        self._register_gcode_handlers()
-
     def get_z_compensation_value(self, pos):
         if not self.z_compensations:
             return 0
